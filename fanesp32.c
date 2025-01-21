@@ -1,72 +1,73 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
-#include <ESP32Servo.h>
 
-// กำหนดขนาดหน้าจอ OLED
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 32
 #define OLED_I2C_ADDRESS 0x3C
 
-// กำหนดการเชื่อมต่อจอ OLED
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
-// กำหนดพินสำหรับ ESC และปุ่ม
 #define ESC_PIN 2
-#define BUTTON_UP 0   // พินสำหรับปุ่มเพิ่มความเร็ว
-#define BUTTON_DOWN 1 // พินสำหรับปุ่มลดความเร็ว
+#define BUTTON_UP 16   
+#define BUTTON_DOWN 17
 
-Servo esc;              // สร้างออบเจ็กต์ Servo สำหรับควบคุม ESC
-int speed = 1000;       // ค่าความเร็วเริ่มต้น (หน่วยไมโครวินาที)
-const int maxSpeed = 2000; // ค่าความเร็วสูงสุด
-const int minSpeed = 1000; // ค่าความเร็วต่ำสุด
+int speedPercent = 0;          // ค่าเปอร์เซ็นต์ความเร็ว
+const int speedStep = 5;       // ระดับการเพิ่ม/ลด %
+const int maxSpeed = 100;      // ความเร็วสูงสุดใน %
+const int minSpeed = 0;        // ความเร็วต่ำสุดใน %
+const int pwmMin = 870;        // ค่า PWM ต่ำสุด
+const int pwmMax = 2118;       // ค่า PWM สูงสุด
+
+unsigned long lastButtonPress = 0; // เวลาที่กดปุ่มล่าสุด
+const unsigned long debounceDelay = 200; // ระยะเวลา debounce
 
 void setup() {
-  // เริ่มต้น Serial Monitor
   Serial.begin(115200);
+  Wire.begin(21, 22);
 
-  // เริ่มต้นหน้าจอ OLED
-  if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_I2C_ADDRESS)) { // ใช้ address 0x3C แทน SSD1306_I2C_ADDRESS
-    Serial.println(F("SSD1306 allocation failed"));
+  if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_I2C_ADDRESS)) {
+    Serial.println(F("failed"));
     for (;;);
   }
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
 
-  // กำหนด ESC_PIN ให้ควบคุม ESC
-  esc.attach(ESC_PIN, minSpeed, maxSpeed);
+  pinMode(ESC_PIN, OUTPUT);
+  pinMode(BUTTON_UP, INPUT);   // ตั้งค่าพินปุ่มเพิ่มความเร็วเป็น INPUT
+  pinMode(BUTTON_DOWN, INPUT); // ตั้งค่าพินปุ่มลดความเร็วเป็น INPUT
+  
+  ledcSetup(0, 50, 15);
+  ledcAttachPin(ESC_PIN, 0);
+  ledcWrite(0, map(speedPercent, 0, 100, pwmMin, pwmMax)); // เขียนค่าเริ่มต้น PWM
 
-  // เริ่มต้น ESC ด้วยค่าความเร็วต่ำสุด
-  esc.writeMicroseconds(minSpeed);
-
-  // ตั้งค่าพินสำหรับปุ่ม
-  pinMode(BUTTON_UP, INPUT_PULLUP);   // ใช้ Pull-up สำหรับปุ่ม
-  pinMode(BUTTON_DOWN, INPUT_PULLUP);
-
-  // แสดงข้อความเริ่มต้น
   displaySpeed();
 }
 
 void loop() {
+  unsigned long currentMillis = millis();
+
   // อ่านสถานะของปุ่มเพิ่มความเร็ว
-  if (digitalRead(BUTTON_UP) == LOW) {
-    if (speed < maxSpeed) {
-      speed += 100; // เพิ่มความเร็วทีละ 50 ไมโครวินาที
-      esc.writeMicroseconds(speed); // อัปเดต ESC ด้วยค่าความเร็ว
-      displaySpeed(); // อัปเดตหน้าจอ
+  if (digitalRead(BUTTON_UP) == HIGH && (currentMillis - lastButtonPress) > debounceDelay) {
+    lastButtonPress = currentMillis;
+    if (speedPercent < maxSpeed) {
+      speedPercent += speedStep;
+      if (speedPercent > maxSpeed) speedPercent = maxSpeed;
+      ledcWrite(0, map(speedPercent, 0, 100, pwmMin, pwmMax)); // แปลงค่าเป็น PWM
+      displaySpeed();
     }
-    delay(100); // หน่วงเวลาเพื่อลดความไวของปุ่ม
   }
 
   // อ่านสถานะของปุ่มลดความเร็ว
-  if (digitalRead(BUTTON_DOWN) == LOW) {
-    if (speed > minSpeed) {
-      speed -= 50; // ลดความเร็วทีละ 50 ไมโครวินาที
-      esc.writeMicroseconds(speed); // อัปเดต ESC ด้วยค่าความเร็ว
-      displaySpeed(); // อัปเดตหน้าจอ
+  if (digitalRead(BUTTON_DOWN) == HIGH && (currentMillis - lastButtonPress) > debounceDelay) {
+    lastButtonPress = currentMillis;
+    if (speedPercent > minSpeed) {
+      speedPercent -= speedStep;
+      if (speedPercent < minSpeed) speedPercent = minSpeed;
+      ledcWrite(0, map(speedPercent, 0, 100, pwmMin, pwmMax)); // แปลงค่าเป็น PWM
+      displaySpeed();
     }
-    delay(100); // หน่วงเวลาเพื่อลดความไวของปุ่ม
   }
 }
 
@@ -74,10 +75,10 @@ void loop() {
 void displaySpeed() {
   display.clearDisplay();
   display.setCursor(0, 0);
-  display.println(F("ESC Speed Controller"));
+  display.println(F("ESC Speed Controller By PP"));
   display.setCursor(0, 20);
   display.print(F("Speed: "));
-  display.print(speed);
-  display.println(F(" us"));
+  display.print(speedPercent);
+  display.println(F(" %"));
   display.display();
 }
